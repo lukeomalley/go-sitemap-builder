@@ -21,22 +21,55 @@ import (
 
 func main() {
 	urlFlag := flag.String("url", "https://gophercises.com", "the url that you want to build a sitemap for")
+	maxDepth := flag.Int("max-depth", 5, "the maximum number of links deep to traverse")
 	flag.Parse()
 
-	fmt.Println(*urlFlag)
+	pages := bfs(*urlFlag, *maxDepth)
+	for _, page := range pages {
+		fmt.Println(page)
+	}
+}
 
-	// GET the webpage
-	resp, err := http.Get(*urlFlag)
+type empty struct{}
+
+func bfs(urlStr string, maxDepth int) []string {
+	seen := make(map[string]empty)
+
+	var q map[string]empty
+	nq := map[string]empty{
+		urlStr: empty{},
+	}
+
+	for i := 0; i <= maxDepth; i++ {
+		q, nq = nq, make(map[string]empty)
+		for url := range q {
+			if _, ok := seen[url]; ok {
+				continue
+			}
+			seen[url] = empty{}
+
+			for _, link := range get(url) {
+				nq[link] = empty{}
+			}
+		}
+	}
+
+	ret := make([]string, 0, len(seen))
+	for url := range seen {
+		ret = append(ret, url)
+	}
+	return ret
+}
+
+func get(urlString string) []string {
+	resp, err := http.Get(urlString)
 	if err != nil {
 		panic(err)
 	}
 	defer resp.Body.Close()
 
 	base := baseURL(resp)
-	pages := hrefsToPages(resp.Body, base)
-	for _, h := range pages {
-		fmt.Println(h)
-	}
+	return filterURLs(hrefsToLinks(resp.Body, base), withPrefix(base))
 }
 
 func baseURL(resp *http.Response) string {
@@ -48,7 +81,7 @@ func baseURL(resp *http.Response) string {
 	return b.String()
 }
 
-func hrefsToPages(r io.Reader, base string) []string {
+func hrefsToLinks(r io.Reader, base string) []string {
 	links, err := link.Parse(r)
 	if err != nil {
 		panic(err)
@@ -59,10 +92,29 @@ func hrefsToPages(r io.Reader, base string) []string {
 		switch {
 		case strings.HasPrefix(l.Href, "/"):
 			hrefs = append(hrefs, base+l.Href)
-		case strings.HasPrefix(l.Href, "http"):
+		case strings.HasPrefix(
+			l.Href, "http"):
 			hrefs = append(hrefs, l.Href)
 		}
 	}
 
 	return hrefs
+}
+
+func filterURLs(links []string, keepFn func(string) bool) []string {
+	var ret []string
+
+	for _, link := range links {
+		if keepFn(link) {
+			ret = append(ret, link)
+		}
+	}
+
+	return ret
+}
+
+func withPrefix(prefix string) func(string) bool {
+	return func(link string) bool {
+		return strings.HasPrefix(link, prefix)
+	}
 }
